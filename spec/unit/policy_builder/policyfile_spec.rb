@@ -146,10 +146,6 @@ describe Chef::PolicyBuilder::Policyfile do
       Chef::PolicyBuilder::Policyfile.new(node_name, ohai_data, json_attribs, override_runlist, events)
     end
 
-    it "always gives `false` for #temporary_policy?" do
-      expect(initialize_pb.temporary_policy?).to be_falsey
-    end
-
     context "chef-solo" do
       before { Chef::Config[:solo_legacy_mode] = true }
 
@@ -161,8 +157,8 @@ describe Chef::PolicyBuilder::Policyfile do
     context "when given an override run_list" do
       let(:override_runlist) { "recipe[foo],recipe[bar]" }
 
-      it "errors on create" do
-        expect { initialize_pb }.to raise_error(err_namespace::UnsupportedFeature)
+      it "does not error" do
+        expect { initialize_pb }.not_to raise_error
       end
     end
 
@@ -206,7 +202,7 @@ describe Chef::PolicyBuilder::Policyfile do
     end
 
     before do
-      Chef::Config[:policy_document_native_api] = false
+      Chef::Config[:policy_document_native_api] = true
       Chef::Config[:deployment_group] = "example-policy-stage"
       allow(policy_builder).to receive(:api_service).and_return(api_service)
     end
@@ -214,6 +210,8 @@ describe Chef::PolicyBuilder::Policyfile do
     describe "when using compatibility mode (policy_document_native_api == false)" do
 
       before do
+        Chef::Config[:policy_document_native_api] = false
+        Chef::Config[:treat_deprecation_warnings_as_errors] = false
         Chef::Config[:deployment_group] = "example-policy-stage"
       end
 
@@ -323,7 +321,7 @@ describe Chef::PolicyBuilder::Policyfile do
           "example2::server@4.2.0 (feab40e)",
         ]
 
-        expect(policy_builder.run_list_with_versions_for_display).to eq(expected)
+        expect(policy_builder.run_list_with_versions_for_display(policy_builder.run_list)).to eq(expected)
       end
 
       it "generates a RunListExpansion-alike object for feeding to the CookbookCompiler" do
@@ -339,6 +337,10 @@ describe Chef::PolicyBuilder::Policyfile do
       end
 
       describe "validating the Policyfile.lock" do
+        before do
+          Chef::Config[:policy_group] = "policy-stage"
+          Chef::Config[:policy_name] = "example"
+        end
 
         it "errors if the policyfile json contains any non-recipe items" do
           parsed_policyfile_json["run_list"] = ["role[foo]"]
@@ -577,11 +579,9 @@ describe Chef::PolicyBuilder::Policyfile do
               expect(node.automatic_attrs[:policy_name]).to eq("policy_name_from_node_json")
               expect(node.automatic_attrs[:policy_group]).to eq("policy_group_from_node_json")
               expect(node.automatic_attrs[:chef_environment]).to eq("policy_group_from_node_json")
-
             end
 
           end
-
         end
 
         it "resets default and override data" do
@@ -664,7 +664,7 @@ describe Chef::PolicyBuilder::Policyfile do
               expect(policy_builder.run_list).to eq([ "recipe[example1::default]" ])
               expected_expansion = Chef::PolicyBuilder::Policyfile::RunListExpansionIsh.new([ "example1::default" ], [])
               expect(policy_builder.run_list_expansion).to eq(expected_expansion)
-              expect(policy_builder.run_list_with_versions_for_display).to eq(["example1::default@2.3.5 (168d210)"])
+              expect(policy_builder.run_list_with_versions_for_display(policy_builder.run_list)).to eq(["example1::default@2.3.5 (168d210)"])
               expect(node.run_list).to eq([ Chef::RunList::RunListItem.new("recipe[example1::default]") ])
               expect(node[:roles]).to eq( [] )
               expect(node[:recipes]).to eq( ["example1::default"] )
@@ -675,7 +675,22 @@ describe Chef::PolicyBuilder::Policyfile do
             end
 
           end
+        end
 
+        context "when an override run_list is given" do
+          let(:override_runlist) { [ "recipe[example2::server]" ] }
+
+          before do
+            policy_builder.build_node
+          end
+
+          it "gives `true` for #temporary_policy?" do
+            expect(policy_builder.temporary_policy?).to be true
+          end
+
+          it "returns the override_runlist for the run_list" do
+            expect(policy_builder.run_list).to eql override_runlist
+          end
         end
 
         describe "hoisting attribute values" do
@@ -806,6 +821,10 @@ describe Chef::PolicyBuilder::Policyfile do
         context "when using compatibility mode (policy_document_native_api == false)" do
           let(:cookbook1_url) { "cookbooks/example1/#{example1_xyz_version}" }
           let(:cookbook2_url) { "cookbooks/example2/#{example2_xyz_version}" }
+          before do
+            Chef::Config[:policy_document_native_api] = false
+            Chef::Config[:treat_deprecation_warnings_as_errors] = false
+          end
 
           context "when the cookbooks don't exist on the server" do
             include_examples "fetching cookbooks when they don't exist"
@@ -826,6 +845,7 @@ describe Chef::PolicyBuilder::Policyfile do
             end
 
             include_examples "fetching cookbooks when they exist"
+
           end
         end
 
@@ -863,10 +883,7 @@ describe Chef::PolicyBuilder::Policyfile do
           end
 
         end
-
       end
     end
-
   end
-
 end
